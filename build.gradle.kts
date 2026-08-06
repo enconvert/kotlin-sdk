@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "com.enconvert"
-version = "0.0.1"
+version = "0.1.0"
 
 repositories {
     mavenCentral()
@@ -35,7 +35,7 @@ mavenPublishing {
     publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL)
     signAllPublications()
 
-    coordinates("com.enconvert", "enconvert-kotlin", "0.0.1")
+    coordinates("com.enconvert", "enconvert-kotlin", "0.1.0")
 
     pom {
         name.set("Enconvert Kotlin SDK")
