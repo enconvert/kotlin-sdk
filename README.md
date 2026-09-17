@@ -12,7 +12,7 @@ Read any web page or file into clean Markdown, JSON, or screenshots, and get a `
 
 ```kotlin
 dependencies {
-    implementation("com.enconvert:enconvert-kotlin:0.0.1")
+    implementation("com.enconvert:enconvert-kotlin:0.2.0")
 }
 ```
 
@@ -22,7 +22,7 @@ dependencies {
 <dependency>
   <groupId>com.enconvert</groupId>
   <artifactId>enconvert-kotlin</artifactId>
-  <version>0.0.1</version>
+  <version>0.2.0</version>
 </dependency>
 ```
 
@@ -82,6 +82,17 @@ val batch = client.v2.perceiveBatch(
     ),
 )
 val done = client.v2.getPerceiveBatch(batch.jobId)
+
+// Direct download — stream the artifact bytes, no signed-URL round trip.
+// Requires exactly one artifact-producing output:
+val direct = client.v2.perceiveDirect(
+    "https://example.com",
+    PerceiveOptions(outputs = listOf(PerceiveOutputName.PDF)),
+)
+java.nio.file.Files.write(java.nio.file.Path.of(direct.filename ?: "page.pdf"), direct.content)
+
+// Re-download a stored artifact of an earlier operation (410 past retention):
+val bytes = client.v2.downloadPerceiveArtifact(op.operationId, PerceiveOutputName.MARKDOWN)
 ```
 
 ### Discover — enumerate a site's URLs (no rendering)

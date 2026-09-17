@@ -21,12 +21,14 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.put
 
 public class EnconvertV2 internal constructor(
     private val request: RequestFn,
     private val multipartRequest: MultipartRequestFn,
+    private val rawRequest: RawRequestFn,
 ) {
 
     // ------------------------------------------------------------------
@@ -70,6 +72,45 @@ public class EnconvertV2 internal constructor(
     /** Poll a perceive batch by jobId. Items fill in as URLs complete. */
     public fun getPerceiveBatch(jobId: String): PerceiveBatchResult =
         toPerceiveBatchResult(get("/v2/perceive/batch/${encodePathSegment(jobId)}"))
+
+    /**
+     * Render one URL and stream the artifact bytes back directly
+     * (direct_download), skipping the JSON envelope and the signed-URL round
+     * trip. Requires exactly one artifact-producing output in
+     * [PerceiveOptions.outputs]; metadata is returned via response headers.
+     */
+    public fun perceiveDirect(url: String, opts: PerceiveOptions = PerceiveOptions()): PerceiveDirectResult {
+        val outputs = opts.outputs ?: listOf(PerceiveOutputName.MARKDOWN, PerceiveOutputName.STRUCTURED)
+        val artifactCount = outputs.count { it in ARTIFACT_OUTPUTS }
+        if (artifactCount != 1) {
+            val valid = ARTIFACT_OUTPUTS.joinToString(", ") { it.wire }
+            throw EnconvertException(
+                "perceiveDirect: requires exactly one artifact-producing output ($valid); got $artifactCount",
+            )
+        }
+        val body = buildJsonObject {
+            serializePerceiveOptionsInto(this, opts)
+            put("url", url)
+            put("direct_download", true)
+        }
+        val response = rawRequest("/v2/perceive", "POST", body.toString())
+        raiseForStatusRaw(response)
+        return toPerceiveDirectResult(response)
+    }
+
+    /**
+     * Stream one stored artifact of an earlier perceive operation. [output]
+     * may be omitted when the operation produced exactly one artifact
+     * (otherwise 400 listing the available outputs); 410 once the artifact
+     * passes the plan's retention window.
+     */
+    public fun downloadPerceiveArtifact(operationId: String, output: PerceiveOutputName? = null): PerceiveDirectResult {
+        var path = "/v2/perceive/${encodePathSegment(operationId)}?direct_download=true"
+        output?.let { path += "&output=${it.wire}" }
+        val response = rawRequest(path, "GET", null)
+        raiseForStatusRaw(response)
+        return toPerceiveDirectResult(response)
+    }
 
     // ------------------------------------------------------------------
     // Discover — enumerate a site's URLs without rendering
@@ -368,6 +409,10 @@ public class EnconvertV2 internal constructor(
 private fun encodePathSegment(value: String): String =
     URLEncoder.encode(value, Charsets.UTF_8).replace("+", "%20")
 
+/** Artifact-producing outputs accepted by [EnconvertV2.perceiveDirect] (everything except STRUCTURED, which is inline JSON). */
+private val ARTIFACT_OUTPUTS: List<PerceiveOutputName> =
+    PerceiveOutputName.entries.filter { it != PerceiveOutputName.STRUCTURED }
+
 // ----------------------------------------------------------------------
 // Request serializers
 // ----------------------------------------------------------------------
@@ -402,6 +447,8 @@ private fun serializePerceiveOptionsInto(builder: JsonObjectBuilder, o: Perceive
         o.blockResources?.let { put("block_resources", JsonArray(it.map { v -> JsonPrimitive(v.wire) })) }
         putIfNotNull("respect_robots", o.respectRobots)
         putIfNotNull("mobile", o.mobile)
+        putIfNotNull("only_main_content", o.onlyMainContent)
+        putIfNotNull("direct_download", o.directDownload)
     }
 }
 
@@ -459,6 +506,9 @@ private fun serializeCssSchema(s: CssSchema): JsonObject = buildJsonObject {
 private fun JsonObject.intValueMap(key: String): Map<String, Int> =
     (this[key] as? JsonObject)?.entries?.associate { (k, v) -> k to ((v as? JsonPrimitive)?.intOrNull ?: 0) } ?: emptyMap()
 
+private fun JsonObject.doubleValueMap(key: String): Map<String, Double> =
+    (this[key] as? JsonObject)?.entries?.associate { (k, v) -> k to ((v as? JsonPrimitive)?.doubleOrNull ?: 0.0) } ?: emptyMap()
+
 private fun toTokens(o: JsonObject?): V2Tokens = V2Tokens(
     input = o?.intOr("input") ?: 0,
     output = o?.intOr("output") ?: 0,
@@ -485,6 +535,8 @@ private fun toPerceiveResult(d: JsonObject): PerceiveResult {
         urlFinal = d.optStr("url_final"),
         contentHash = d.optStr("content_hash"),
         renderQuality = d.optDouble("render_quality"),
+        statusCode = d.optInt("status_code"),
+        deductions = d.doubleValueMap("deductions"),
         cacheHit = d.boolOr("cache_hit"),
         outputs = outputs,
         structured = d.optObj("structured"),
@@ -494,7 +546,39 @@ private fun toPerceiveResult(d: JsonObject): PerceiveResult {
         durationMs = d.optLong("duration_ms"),
         error = d.optStr("error"),
         warnings = d.strArr("warnings"),
+        optionsEcho = d.optObj("options_echo"),
     )
+}
+
+/** Builds a direct-download result from the raw body + response headers (names lowercased). */
+private fun toPerceiveDirectResult(response: RawHttpResponseData): PerceiveDirectResult {
+    val headers = response.headers
+    return PerceiveDirectResult(
+        content = response.bodyBytes,
+        contentType = headers["content-type"] ?: "application/octet-stream",
+        filename = headers["content-disposition"]?.let(::filenameFromContentDisposition),
+        operationId = headers["x-operation-id"] ?: "",
+        objectKey = headers["x-object-key"] ?: "",
+        cacheHit = headers["x-cache-hit"] == "true",
+        renderQuality = headers["x-render-quality"]?.toDoubleOrNull(),
+        sourceStatusCode = headers["x-source-status-code"]?.toIntOrNull(),
+        contentHash = headers["x-content-hash"],
+        warningsCount = headers["x-warnings-count"]?.toIntOrNull() ?: 0,
+    )
+}
+
+/** Extracts the filename="..." (or bare-token) value from a Content-Disposition header, or null when it carries none. */
+private fun filenameFromContentDisposition(value: String): String? {
+    for (part in value.split(";")) {
+        val trimmed = part.trim()
+        if (!trimmed.lowercase().startsWith("filename=")) continue
+        var filename = trimmed.substring("filename=".length)
+        if (filename.length >= 2 && filename.startsWith("\"") && filename.endsWith("\"")) {
+            filename = filename.substring(1, filename.length - 1)
+        }
+        return filename.ifEmpty { null }
+    }
+    return null
 }
 
 private fun toPerceiveBatchResult(d: JsonObject): PerceiveBatchResult = PerceiveBatchResult(

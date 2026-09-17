@@ -22,6 +22,9 @@ import kotlinx.serialization.json.put
 
 private const val DEFAULT_BASE_URL = "https://api.enconvert.com"
 private const val DEFAULT_TIMEOUT_MS = 300_000L
+
+/** Sent on every API request, used for traffic attribution (overridable via the `userAgent` constructor parameter). */
+private const val DEFAULT_USER_AGENT = "enconvert-sdk/$VERSION (kotlin)"
 private const val DEFAULT_BATCH_POLL_INTERVAL_MS = 5_000L
 private const val DEFAULT_BATCH_TIMEOUT_MS = 1_800_000L
 
@@ -38,6 +41,7 @@ public class Enconvert(
     apiKey: String,
     timeout: Long = DEFAULT_TIMEOUT_MS,
     baseUrl: String = DEFAULT_BASE_URL,
+    userAgent: String = DEFAULT_USER_AGENT,
 ) {
     init {
         require(apiKey.isNotBlank()) { "Enconvert: 'apiKey' is required" }
@@ -46,6 +50,7 @@ public class Enconvert(
     private val apiKeyValue: String = apiKey
     private val baseUrlValue: String = baseUrl.trimEnd('/')
     private val timeoutMillis: Long = timeout
+    private val userAgentValue: String = userAgent
     private val httpClient: HttpClient = HttpClient.newHttpClient()
 
     /**
@@ -55,6 +60,7 @@ public class Enconvert(
     public val v2: EnconvertV2 = EnconvertV2(
         request = { path, method, jsonBody -> sendJson(path, method, jsonBody) },
         multipartRequest = { path, body -> sendMultipart(path, body) },
+        rawRequest = { path, method, jsonBody -> sendRaw(path, method, jsonBody) },
     )
 
     // ------------------------------------------------------------------
@@ -414,6 +420,7 @@ public class Enconvert(
         val builder = HttpRequest.newBuilder(URI.create(baseUrlValue + path))
             .timeout(Duration.ofMillis(timeoutMillis))
             .header("X-API-Key", apiKeyValue)
+            .header("User-Agent", userAgentValue)
         when (method) {
             "GET" -> builder.GET()
             "POST" -> builder.header("content-type", "application/json").POST(bodyPublisher)
@@ -425,10 +432,36 @@ public class Enconvert(
         return HttpResponseData(response.statusCode(), response.body())
     }
 
+    /**
+     * [sendJson] counterpart returning raw bytes + response headers (names
+     * lowercased) — used by the V2 direct-download paths, whose artifact
+     * metadata rides on headers instead of a JSON body.
+     */
+    private fun sendRaw(path: String, method: String, jsonBody: String?): RawHttpResponseData {
+        val bodyPublisher = jsonBody?.let { HttpRequest.BodyPublishers.ofString(it, StandardCharsets.UTF_8) }
+            ?: HttpRequest.BodyPublishers.noBody()
+        val builder = HttpRequest.newBuilder(URI.create(baseUrlValue + path))
+            .timeout(Duration.ofMillis(timeoutMillis))
+            .header("X-API-Key", apiKeyValue)
+            .header("User-Agent", userAgentValue)
+        when (method) {
+            "GET" -> builder.GET()
+            "POST" -> builder.header("content-type", "application/json").POST(bodyPublisher)
+            else -> builder.method(method, bodyPublisher)
+        }
+        val response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofByteArray())
+        val headers = mutableMapOf<String, String>()
+        for ((name, values) in response.headers().map()) {
+            values.firstOrNull()?.let { headers[name.lowercase()] = it }
+        }
+        return RawHttpResponseData(response.statusCode(), response.body(), headers)
+    }
+
     private fun sendMultipart(path: String, body: MultipartBody): HttpResponseData {
         val request = HttpRequest.newBuilder(URI.create(baseUrlValue + path))
             .timeout(Duration.ofMillis(timeoutMillis))
             .header("X-API-Key", apiKeyValue)
+            .header("User-Agent", userAgentValue)
             .header("content-type", body.contentType)
             .POST(body.bodyPublisher())
             .build()

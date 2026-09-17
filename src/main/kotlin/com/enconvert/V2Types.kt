@@ -15,7 +15,6 @@ package com.enconvert
 
 public enum class PerceiveOutputName(internal val wire: String) {
     MARKDOWN("markdown"),
-    MARKDOWN_FIT("markdown_fit"),
     HTML_CLEANED("html_cleaned"),
     HTML_RAW("html_raw"),
     SCREENSHOT("screenshot"),
@@ -129,6 +128,17 @@ public data class PerceiveOptions(
     val blockResources: List<PerceiveResourceType>? = null,
     val respectRobots: Boolean? = null,
     val mobile: Boolean? = null,
+    /**
+     * Strip site chrome (nav, header, footer, cookie banners) from the
+     * markdown artifact and main_content extract. API default: true.
+     */
+    val onlyMainContent: Boolean? = null,
+    /**
+     * Respond with the artifact bytes directly (perceive only —
+     * perceiveBatch rejects it with 422). Requires exactly one
+     * artifact-producing output.
+     */
+    val directDownload: Boolean? = null,
 )
 
 public enum class PerceiveBatchOutputMode(internal val wire: String) {
@@ -182,6 +192,10 @@ public data class PerceiveResult(
     val contentHash: String? = null,
     /** 0.0-1.0 render quality score. */
     val renderQuality: Double? = null,
+    /** HTTP status of the final main-document response. */
+    val statusCode: Int? = null,
+    /** Named render-quality deductions that fired, e.g. {"http_error": 0.7}. Empty on a clean render. */
+    val deductions: Map<String, Double> = emptyMap(),
     val cacheHit: Boolean = false,
     /** Keyed by output name (e.g. "markdown", "screenshot_full_page"). */
     val outputs: Map<String, V2OutputArtifact> = emptyMap(),
@@ -193,6 +207,33 @@ public data class PerceiveResult(
     val durationMs: Long? = null,
     val error: String? = null,
     val warnings: List<String> = emptyList(),
+    /** Echo of the request options the server honoured (secrets redacted to booleans). Null when the server omits it. */
+    val optionsEcho: Map<String, Any?>? = null,
+)
+
+/**
+ * Result of a direct-download perceive call ([EnconvertV2.perceiveDirect] /
+ * [EnconvertV2.downloadPerceiveArtifact]): the raw artifact bytes plus the
+ * metadata the server carries on response headers.
+ */
+public class PerceiveDirectResult(
+    /** The artifact bytes. */
+    public val content: ByteArray,
+    /** Artifact media type, e.g. "text/markdown; charset=utf-8". */
+    public val contentType: String,
+    /** Filename parsed from Content-Disposition (`<operation>_<output>.<ext>`). Null when the header is absent. */
+    public val filename: String? = null,
+    public val operationId: String = "",
+    public val objectKey: String = "",
+    public val cacheHit: Boolean = false,
+    /** 0.0-1.0 render quality score. Null when the header is absent. */
+    public val renderQuality: Double? = null,
+    /** HTTP status of the upstream main-document response. Null when the header is absent. */
+    public val sourceStatusCode: Int? = null,
+    /** SHA-256 of the rendered content. Null when the header is absent. */
+    public val contentHash: String? = null,
+    /** Number of warnings the render produced. 0 when the header is absent. */
+    public val warningsCount: Int = 0,
 )
 
 public enum class PerceiveBatchStatus(internal val wire: String) {

@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "com.enconvert"
-version = "0.1.0"
+version = "0.2.0"
 
 repositories {
     mavenCentral()
@@ -35,7 +35,7 @@ mavenPublishing {
     publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL)
     signAllPublications()
 
-    coordinates("com.enconvert", "enconvert-kotlin", "0.1.0")
+    coordinates("com.enconvert", "enconvert-kotlin", "0.2.0")
 
     pom {
         name.set("Enconvert Kotlin SDK")
@@ -44,7 +44,7 @@ mavenPublishing {
                 "every read scored. V2 perception + file conversion.",
         )
         inceptionYear.set("2026")
-        url.set("https://github.com/conversionapi/kotlin-sdk")
+        url.set("https://github.com/enconvert/kotlin-sdk")
         licenses {
             license {
                 name.set("MIT License")
@@ -61,9 +61,9 @@ mavenPublishing {
             }
         }
         scm {
-            url.set("https://github.com/conversionapi/kotlin-sdk")
-            connection.set("scm:git:git://github.com/conversionapi/kotlin-sdk.git")
-            developerConnection.set("scm:git:ssh://git@github.com/conversionapi/kotlin-sdk.git")
+            url.set("https://github.com/enconvert/kotlin-sdk")
+            connection.set("scm:git:git://github.com/enconvert/kotlin-sdk.git")
+            developerConnection.set("scm:git:ssh://git@github.com/enconvert/kotlin-sdk.git")
         }
     }
 }

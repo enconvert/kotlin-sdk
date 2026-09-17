@@ -31,12 +31,34 @@ public typealias RequestFn = (path: String, method: String, jsonBody: String?) -
  */
 internal typealias MultipartRequestFn = (path: String, body: MultipartBody) -> HttpResponseData
 
+/**
+ * Raw-byte HTTP response for the V2 direct-download paths: body bytes plus
+ * the response headers (names lowercased), which carry the artifact metadata.
+ */
+public class RawHttpResponseData(
+    public val statusCode: Int,
+    public val bodyBytes: ByteArray,
+    public val headers: Map<String, String>,
+)
+
+/**
+ * Raw-byte counterpart of [RequestFn], used by [EnconvertV2.perceiveDirect]
+ * and [EnconvertV2.downloadPerceiveArtifact].
+ */
+public typealias RawRequestFn = (path: String, method: String, jsonBody: String?) -> RawHttpResponseData
+
 /** Generate a 32-character hex job id (UUIDv4 with dashes removed). */
 public fun newJobId(): String = UUID.randomUUID().toString().replace("-", "")
 
 /** Sleep for [ms] milliseconds (used by job/batch polling). */
 public fun sleepMillis(ms: Long) {
     if (ms > 0) Thread.sleep(ms)
+}
+
+/** [raiseForStatus] counterpart for raw-byte responses (error bodies are JSON text). */
+public fun raiseForStatusRaw(response: RawHttpResponseData) {
+    if (response.statusCode < 400) return
+    raiseForStatus(HttpResponseData(response.statusCode, response.bodyBytes.toString(Charsets.UTF_8)))
 }
 
 /** Inspect an HTTP response and throw the matching [EnconvertException] subtype for status >= 400. */
